@@ -1,0 +1,115 @@
+---
+title: "GBM_QOL"
+format: html
+editor: visual
+---
+
+## Brain Tumor PROMIS-10 QOL Data 
+
+Study - Description of patient cohort.
+
+NB: Pre-processing: Used sed to replace ',' in questions with '-' to avoid csv parsing errors.
+
+## Load data
+
+```{r}
+BBTCdf = read_csv('BBTCPromisGH.csv')
+promisdf = read_delim(file = '~/promis.csv',delim=',' )
+#problems(df)
+```
+
+Number of unique patients
+
+```{r}
+promisdf %>% select(PAT_EPI_ID) %>% unique() %>% count() 
+```
+
+```{r}
+visit_df <- promisdf %>% select(PAT_EPI_ID, CSN) %>% unique() %>% group_by(PAT_EPI_ID) %>% summarise(n=n())
+
+ggplot(data=visit_df, aes(x='Visits',y=n)) + geom_boxplot() + yscale('log10')
+
+table(visit_df$n)
+```
+
+Plot diagnosis frequencies
+
+```{r}
+#Promis-10 elements
+ggplot(data=promisdf %>% select(PAT_EPI_ID, DxGrp) %>% na.omit() %>% unique(), aes(x=fct_infreq(substr(DxGrp,1,10)))) +geom_bar(na.rm = TRUE) + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) #+ yscale('log10')
+
+```
+
+```{r}
+#All diagnosis groups
+promisdf %>% select(PAT_EPI_ID, DxGrp) %>% unique() %>% select(DxGrp) %>% unique()
+```
+
+### Questions: 
+
+Do all have at least one NEOPLASMS dx?
+
+```{r}
+dx_promis = promisdf %>% 
+  filter(QNRElement=="Global Mental Health T Score:") %>% 
+  select(PAT_EPI_ID, DxGrp,AgeAtEncounter,PAT_GENDER_DESC, PAT_MARITAL_STS_DESC, PAT_RACE_DESC, Element_Value) %>% 
+  na.omit() %>% 
+  unique() %>% 
+  group_by(PAT_EPI_ID, PAT_GENDER_DESC) %>% 
+  summarise(n=n(), 
+            Age=min(AgeAtEncounter), 
+            Marital=first(PAT_MARITAL_STS_DESC), 
+            Race = first(PAT_RACE_DESC), 
+            CANCERDX=as.factor(any(DxGrp=='NEOPLASMS')), 
+            LowestMentalHealth=min(Element_Value), 
+            HighestMentalHealth=max(Element_Value)) %>% 
+  mutate(Marital=ifelse(Marital=="OTHER",NA, Marital)) %>% 
+  mutate(Marital=ifelse(Marital=="UNKNOWN",NA, Marital)) %>% 
+  mutate(Race=ifelse(Race=="UNAVAILABLE", NA, Race)) %>% 
+  mutate(Race=ifelse(Race=="AMERICAN INDIAN/ALASKA NATIVE", "OTHER", Race)) %>% 
+  mutate(Race=ifelse(Race=="ASIAN", "OTHER", Race)) %>% 
+  mutate(Race=ifelse(Race=="MULTIRACIAL/MULTICULTURAL", "OTHER", Race))  %>% 
+  mutate(Race=ifelse(Race=="DECLINED", NA, Race)) %>% 
+  mutate(Married=ifelse(Marital %in% c("MARRIED", "DOMESTIC PARTNER"), "PARTNERED", Marital), 
+         Married = ifelse(Married %in% c("WIDOWED", "DIVORCED","LEGALLY SEPARATED"), "SEPARATED", Married)) %>% filter(n>1)
+
+#table(dx_promis %>% select(-PAT_EPI_ID))
+
+# Create summary table using gtsummary
+library(gtsummary)
+dx_table <- tbl_summary(dx_promis %>% select(-PAT_EPI_ID,-Marital), by = Married, 
+                        statistic = list(
+      all_continuous() ~ "{mean} ({sd})",
+      all_categorical() ~ "{n} ({p}%)"
+    ) ) %>%
+  add_n() %>%  # add column with total number of non-missing observations
+  add_p() # test for a difference between groups (need by= argument)
+
+
+doc <- read_docx()
+# The script
+doc %>% 
+     body_add_flextable(dx_table %>%
+     as_flex_table(.) %>%
+               theme_zebra( odd_body = "#DDDDDD", even_body = "#FFFFFF" ) ) %>%
+     print(.,target = "dxtable.docx")
+```
+
+Examine non-neoplasm diagnosis labels
+
+```{r}
+non_Cancer = dx_promis %>% filter(CANCERDX=='FALSE') %>% select(PAT_EPI_ID)
+non_Cancer_dx = promisdf %>% filter(PAT_EPI_ID %in% non_Cancer$PAT_EPI_ID) %>% select(PAT_EPI_ID, DxName, DxGrp) %>% unique()
+table(non_Cancer_dx$DxGrp)
+```
+
+\
+What types of brain tumor?\
+Co-morbidities?\
+Marital status \
+QOL over time
+
+```{r}
+#All diagnosis groups
+df %>% select(PAT_EPI_ID, DxGrp) %>% unique() %>% select(DxGrp) %>% unique()
+```
